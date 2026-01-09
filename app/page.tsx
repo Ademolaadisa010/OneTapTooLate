@@ -523,7 +523,7 @@ export default function OneTapTooLate() {
         </div>
       )}
 
-      <div className="absolute top-[21%] flex items-center gap-3">
+      <div className="absolute top-[30%] flex items-center gap-3">
         <Trophy className="text-white/40" size={16} />
         <span className="text-xs text-white/40 font-bold tracking-wider uppercase">Best</span>
         <h1 className="text-lg text-white/60 font-black tracking-wide">{highScore}</h1>

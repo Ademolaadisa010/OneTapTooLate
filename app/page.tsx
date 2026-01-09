@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Wallet, Trophy, Zap, AlertCircle, ExternalLink } from "lucide-react";
 
 export default function OneTapTooLate() {
   const [score, setScore] = useState(0);
@@ -15,6 +16,19 @@ export default function OneTapTooLate() {
   const [perfect, setPerfect] = useState(false);
   const [combo, setCombo] = useState(0);
   const [showCombo, setShowCombo] = useState(false);
+  
+  // Solana Web3 states
+  const [walletAddress, setWalletAddress] = useState<string>("");
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string>("");
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [totalPoints, setTotalPoints] = useState(0);
+  const [sessionPoints, setSessionPoints] = useState(0);
+  const [pointsBreakdown, setPointsBreakdown] = useState({
+    perfectHits: 0,
+    comboBonus: 0,
+    speedBonus: 0,
+  });
 
   const animationRef = useRef<number | undefined>(undefined);
   const lastTimeRef = useRef<number>(0);
@@ -24,10 +38,18 @@ export default function OneTapTooLate() {
   const TARGET_WIDTH = 14;
   const INDICATOR_WIDTH = 2.5;
   const NEAR_MISS_THRESHOLD = 6;
+  
+  // Points calculation constants
+  const POINTS_PER_HIT = 10;
+  const COMBO_MULTIPLIER = 5;
+  const SPEED_BONUS_THRESHOLD = 1.5;
 
   useEffect(() => {
     const stored = localStorage.getItem("onetaptoolate_highscore");
     if (stored) setHighScore(parseInt(stored));
+
+    // Check if wallet was previously connected
+    checkWalletConnection();
 
     instructionTimerRef.current = setTimeout(() => {
       setShowInstructions(false);
@@ -37,6 +59,136 @@ export default function OneTapTooLate() {
       if (instructionTimerRef.current) clearTimeout(instructionTimerRef.current);
     };
   }, []);
+
+  const checkWalletConnection = async () => {
+    try {
+      const { solana } = window as any;
+      if (solana && solana.isPhantom) {
+        const response = await solana.connect({ onlyIfTrusted: true });
+        if (response.publicKey) {
+          const address = response.publicKey.toString();
+          setWalletAddress(address);
+          loadWalletPoints(address);
+        }
+      }
+    } catch (error) {
+      // User hasn't connected before
+    }
+  };
+
+  const loadWalletPoints = (address: string) => {
+    const key = `points_${address}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const data = JSON.parse(stored);
+      setTotalPoints(data.total || 0);
+      setPointsBreakdown(data.breakdown || { perfectHits: 0, comboBonus: 0, speedBonus: 0 });
+    }
+  };
+
+  const saveWalletPoints = (address: string, points: number, breakdown: any) => {
+    const key = `points_${address}`;
+    localStorage.setItem(key, JSON.stringify({ total: points, breakdown }));
+  };
+
+  const connectPhantom = async () => {
+    setIsConnecting(true);
+    setWalletError("");
+    
+    try {
+      const { solana } = window as any;
+      
+      if (!solana || !solana.isPhantom) {
+        setWalletError("Phantom wallet not found!");
+        setShowWalletModal(true);
+        setIsConnecting(false);
+        return;
+      }
+
+      const response = await solana.connect();
+      const address = response.publicKey.toString();
+      setWalletAddress(address);
+      loadWalletPoints(address);
+      setShowWalletModal(false);
+    } catch (error: any) {
+      console.error("Phantom connection error:", error);
+      setWalletError(error.message || "Failed to connect to Phantom");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const connectSolflare = async () => {
+    setIsConnecting(true);
+    setWalletError("");
+    
+    try {
+      const { solflare } = window as any;
+      
+      if (!solflare || !solflare.isSolflare) {
+        setWalletError("Solflare wallet not found!");
+        setIsConnecting(false);
+        return;
+      }
+
+      await solflare.connect();
+      const address = solflare.publicKey.toString();
+      setWalletAddress(address);
+      loadWalletPoints(address);
+      setShowWalletModal(false);
+    } catch (error: any) {
+      console.error("Solflare connection error:", error);
+      setWalletError(error.message || "Failed to connect to Solflare");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const disconnectWallet = async () => {
+    try {
+      const { solana } = window as any;
+      if (solana && solana.isPhantom) {
+        await solana.disconnect();
+      }
+      
+      const { solflare } = window as any;
+      if (solflare && solflare.isSolflare) {
+        await solflare.disconnect();
+      }
+    } catch (error) {
+      console.error("Disconnect error:", error);
+    }
+    
+    setWalletAddress("");
+    setTotalPoints(0);
+    setSessionPoints(0);
+    setPointsBreakdown({ perfectHits: 0, comboBonus: 0, speedBonus: 0 });
+  };
+
+  const shortenAddress = (address: string) => {
+    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  };
+
+  const calculatePoints = (currentCombo: number, currentSpeed: number) => {
+    let points = POINTS_PER_HIT;
+    let breakdown = { ...pointsBreakdown };
+
+    breakdown.perfectHits += POINTS_PER_HIT;
+    
+    if (currentCombo >= 3) {
+      const comboBonus = Math.floor(currentCombo / 3) * COMBO_MULTIPLIER;
+      points += comboBonus;
+      breakdown.comboBonus += comboBonus;
+    }
+    
+    if (currentSpeed >= SPEED_BONUS_THRESHOLD) {
+      const speedBonus = Math.floor((currentSpeed - SPEED_BONUS_THRESHOLD) * 10);
+      points += speedBonus;
+      breakdown.speedBonus += speedBonus;
+    }
+
+    return { points, breakdown };
+  };
 
   const generateNewTarget = useCallback(() => {
     const minDistance = 25;
@@ -99,13 +251,24 @@ export default function OneTapTooLate() {
 
       setFeedback("PERFECT!");
       setPerfect(true);
+      
       setScore((s) => {
-        const bonusPoints = newCombo >= 5 ? 2 : 1;
-        const newScore = s + bonusPoints;
+        const newScore = s + 1;
         if (newScore > highScore) {
           setHighScore(newScore);
           localStorage.setItem("onetaptoolate_highscore", newScore.toString());
         }
+        
+        if (walletAddress) {
+          const { points, breakdown } = calculatePoints(newCombo, speed);
+          setSessionPoints(prev => prev + points);
+          setPointsBreakdown(breakdown);
+          
+          const newTotal = totalPoints + points;
+          setTotalPoints(newTotal);
+          saveWalletPoints(walletAddress, newTotal, breakdown);
+        }
+        
         return newScore;
       });
       
@@ -146,6 +309,7 @@ export default function OneTapTooLate() {
     setCombo(0);
     setSpeed(0.7);
     setIndicatorPosition(0);
+    setSessionPoints(0);
     generateNewTarget();
     setGameState("playing");
     setFeedback("");
@@ -179,10 +343,6 @@ export default function OneTapTooLate() {
           from { opacity: 0; transform: scale(0.6) translateY(20px); }
           to { opacity: 1; transform: scale(1) translateY(0); }
         }
-        @keyframes fadeOut {
-          from { opacity: 1; }
-          to { opacity: 0; }
-        }
         @keyframes comboScale {
           0% { transform: scale(0.5); opacity: 0; }
           50% { transform: scale(1.2); opacity: 1; }
@@ -204,9 +364,6 @@ export default function OneTapTooLate() {
         .animate-fadeIn {
           animation: fadeIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
-        .animate-fadeOut {
-          animation: fadeOut 0.5s ease-out forwards;
-        }
         .animate-combo {
           animation: comboScale 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
         }
@@ -216,6 +373,145 @@ export default function OneTapTooLate() {
       `}</style>
 
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-purple-900/10 via-transparent to-transparent pointer-events-none" />
+
+      {/* Wallet Connection Button */}
+      <div className="absolute top-4 right-4 z-10">
+        {!walletAddress ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowWalletModal(true);
+            }}
+            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
+          >
+            <Wallet size={20} />
+            Connect Wallet
+          </button>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white font-bold rounded-lg shadow-lg flex items-center gap-2">
+              <Wallet size={20} />
+              {shortenAddress(walletAddress)}
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                disconnectWallet();
+              }}
+              className="px-4 py-2 bg-red-600/80 text-white text-sm font-bold rounded-lg hover:bg-red-600 transition-all"
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Wallet Selection Modal */}
+      {showWalletModal && (
+        <div
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowWalletModal(false);
+          }}
+        >
+          <div
+            className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-8 max-w-md w-full mx-4 border-2 border-purple-500/30 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-3xl font-black text-white mb-6">Connect Wallet</h2>
+            
+            {walletError && (
+              <div className="mb-4 p-4 bg-red-500/20 border border-red-500/50 rounded-lg flex items-start gap-3">
+                <AlertCircle className="text-red-400 flex-shrink-0 mt-0.5" size={20} />
+                <div>
+                  <p className="text-red-300 font-bold mb-1">Connection Failed</p>
+                  <p className="text-red-200 text-sm">{walletError}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3 mb-6">
+              <button
+                onClick={connectPhantom}
+                disabled={isConnecting}
+                className="w-full px-6 py-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 text-white font-bold rounded-xl transition-all flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                    <span className="text-purple-600 font-black">P</span>
+                  </div>
+                  Phantom
+                </span>
+                <span className="text-sm text-purple-200">Recommended</span>
+              </button>
+
+              <button
+                onClick={connectSolflare}
+                disabled={isConnecting}
+                className="w-full px-6 py-4 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-500 hover:to-orange-600 text-white font-bold rounded-xl transition-all flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                  <span className="text-orange-600 font-black">S</span>
+                </div>
+                Solflare
+              </button>
+            </div>
+
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mb-4">
+              <p className="text-blue-300 text-sm font-bold mb-2 flex items-center gap-2">
+                <AlertCircle size={16} />
+                Don't have a wallet?
+              </p>
+              <a
+                href="https://phantom.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Download Phantom Wallet
+                <ExternalLink size={14} />
+              </a>
+            </div>
+
+            <button
+              onClick={() => setShowWalletModal(false)}
+              className="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Points Display */}
+      {walletAddress && (
+        <div className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-sm rounded-lg p-4 border border-white/10">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="text-yellow-400" size={20} />
+            <span className="text-white font-bold">Points</span>
+          </div>
+          <div className="text-3xl font-black text-yellow-400 mb-1">{totalPoints.toLocaleString()}</div>
+          {sessionPoints > 0 && (
+            <div className="text-sm text-green-400 font-bold">+{sessionPoints} this session</div>
+          )}
+          <div className="mt-3 space-y-1 text-xs text-white/60">
+            <div className="flex justify-between gap-4">
+              <span>Perfect Hits:</span>
+              <span className="text-white/80 font-bold">{pointsBreakdown.perfectHits}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span>Combo Bonus:</span>
+              <span className="text-yellow-400 font-bold">{pointsBreakdown.comboBonus}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span>Speed Bonus:</span>
+              <span className="text-blue-400 font-bold">{pointsBreakdown.speedBonus}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="absolute top-[8%] text-8xl md:text-9xl font-black text-white drop-shadow-[0_0_30px_rgba(255,255,255,0.7)] tracking-tighter">
         {score}
@@ -228,6 +524,7 @@ export default function OneTapTooLate() {
       )}
 
       <div className="absolute top-[21%] flex items-center gap-3">
+        <Trophy className="text-white/40" size={16} />
         <span className="text-xs text-white/40 font-bold tracking-wider uppercase">Best</span>
         <h1 className="text-lg text-white/60 font-black tracking-wide">{highScore}</h1>
       </div>
@@ -278,8 +575,13 @@ export default function OneTapTooLate() {
         <div className="absolute bottom-[12%] flex flex-col items-center gap-6 animate-fadeIn">
           <div className="flex flex-col items-center gap-2 mb-2">
             <div className="text-4xl md:text-5xl font-black text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
-              {score}
+              Score: {score}
             </div>
+            {walletAddress && sessionPoints > 0 && (
+              <div className="text-2xl font-black text-yellow-400 drop-shadow-[0_0_20px_rgba(250,204,21,0.8)]">
+                +{sessionPoints} Points
+              </div>
+            )}
             {score > 0 && (
               <div className="text-sm text-white/50 font-bold tracking-wide">
                 {combo > 0 ? `${combo}× streak` : "Keep trying!"}
@@ -299,7 +601,7 @@ export default function OneTapTooLate() {
       )}
 
       <div className="absolute bottom-4 text-[10px] text-white/20 font-semibold tracking-widest uppercase">
-        One Tap Too Late
+        One Tap Too Late - Solana Edition
       </div>
     </div>
   );
